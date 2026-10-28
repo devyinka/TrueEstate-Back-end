@@ -4,7 +4,7 @@ import { z } from "zod";
 import { agentInvitationController } from "../controllers/agentInvitation.controller.js";
 
 import { requireRole } from "../auth/auth.MiddleWare.js";
-const router = Router();
+const agentInvitationRoute = Router();
 
 export const agentInvitationSchema = z
   .object({
@@ -17,41 +17,44 @@ export const agentInvitationSchema = z
   });
 
 // CREATE AGENT INVITATION
-router.post(
-  "/",
+agentInvitationRoute.post(
+  "/CreateAgentInvitation",
   requireRole("LANDLORD"),
   agentInvitationController.createInvitation,
 );
 
 // GET MY INVITATIONS
-router.get(
-  "/",
+agentInvitationRoute.get(
+  "/getMyInvitations",
   requireRole("AGENT"),
   agentInvitationController.getMyInvitations,
 );
 
 // GET INVITATION BY TOKEN
-router.get("/:token", agentInvitationController.getInvitationByToken);
+agentInvitationRoute.get(
+  "/getInvitationByToken/:token",
+  agentInvitationController.getInvitationByToken,
+);
 
 // ACCEPT AGENT INVITATION
-router.post(
-  "/:invitationId/accept",
+agentInvitationRoute.post(
+  "/agentAcceptInvitation/:invitationId",
   requireRole("AGENT"),
   agentInvitationController.acceptInvitation,
 );
 
 // DECLINE AGENT INVITATION
-router.post(
-  "/:invitationId/decline",
+agentInvitationRoute.post(
+  "/agentDeclineInvitation/:invitationId",
   requireRole("AGENT"),
   agentInvitationController.declineInvitation,
 );
 
 // CANCEL AGENT INVITATION
-router.post(
-  "/:invitationId/cancel",
+agentInvitationRoute.post(
+  "/landlordCancelInvitation/:invitationId/cancel",
   requireRole("LANDLORD"),
   agentInvitationController.cancelInvitation,
 );
 
-export default router;
+export default agentInvitationRoute;

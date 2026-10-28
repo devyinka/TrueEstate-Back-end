@@ -134,7 +134,7 @@ export const authService = {
       throw new AppError("Verification code has expired", 400);
     }
 
-    // 2. Mark OTP as used and User as ACTIVE in a transaction
+    //  Mark OTP as used and User as ACTIVE in a transaction
     const verifiedUser = await db.transaction(async (tx) => {
       await tx
         .update(otps)
@@ -150,11 +150,29 @@ export const authService = {
       return updatedUser;
     });
 
-    // 3. Generate fresh tokens now that they are ACTIVE
+    let hasPendingInvitation = false;
+
+    if (verifiedUser.email) {
+      if (verifiedUser.role === "TENANT") {
+        const invite = await db.query.tenantInvitations.findFirst({
+          where: eq(tenantInvitations.email, verifiedUser.email),
+        });
+        hasPendingInvitation = !!invite;
+      } else if (verifiedUser.role === "AGENT") {
+        const invite = await db.query.agentInvitations.findFirst({
+          where: eq(agentInvitations.email, verifiedUser.email),
+        });
+        hasPendingInvitation = !!invite;
+      }
+    }
+
     const tokens = await authService.createSession(verifiedUser);
 
     return {
-      user: sanitizeUser(verifiedUser),
+      user: {
+        ...sanitizeUser(verifiedUser),
+        hasPendingInvitation,
+      },
       ...tokens,
     };
   },

@@ -49,20 +49,20 @@ export const agentIdParamSchema = z.string().uuid("Must be a valid agent ID");
 const router = Router();
 
 router.get(
-  "/api/landlords/agents",
+  "/landlords/agents",
   requireRole("LANDLORD"),
   landlordController.getAgents,
 );
 
 router.get(
-  "/api/landlords/agents/:agentId",
+  "/landlords/agents/:agentId",
   requireRole("LANDLORD"),
   landlordController.getAgent,
 );
 
 // ASSIGN PROPERTY TO AGENT
 router.post(
-  "/properties",
+  "/assignproperties",
   requireRole("LANDLORD"),
   landlordController.assignProperty,
 );

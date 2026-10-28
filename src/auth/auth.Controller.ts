@@ -1,8 +1,13 @@
-import type { Request, Response } from "express";
+import type { NextFunction, Request, Response } from "express";
 
 import { authService } from "./auth.Service";
 
-import { loginSchema, refreshSchema, registerSchema } from "./auth.Routes.js";
+import {
+  loginSchema,
+  refreshSchema,
+  registerSchema,
+  verifyOtpSchema,
+} from "./auth.Routes.js";
 
 export async function register(req: Request, res: Response) {
   const input = registerSchema.parse(req.body);
@@ -12,6 +17,21 @@ export async function register(req: Request, res: Response) {
   return res.status(201).json({
     success: true,
     message: "Account created successfully",
+    data: result,
+  });
+}
+
+export async function verifyAccount(req: Request, res: Response) {
+  const validatedData = verifyOtpSchema.parse(req.body);
+
+  const result = await authService.verifyAccountOtp(
+    validatedData.userId,
+    validatedData.code,
+  );
+
+  return res.status(200).json({
+    success: true,
+    message: "Account successfully verified",
     data: result,
   });
 }

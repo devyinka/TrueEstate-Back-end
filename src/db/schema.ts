@@ -73,6 +73,17 @@ export const tenantInvitationStatusEnum = pgEnum("tenant_invitation_status", [
   "CANCELLED",
 ]);
 
+export const otpTypeEnum = pgEnum("otp_type", [
+  "ACCOUNT_VERIFICATION",
+  "PASSWORD_RESET",
+]);
+
+export const otpStatusEnum = pgEnum("otp_status", [
+  "PENDING",
+  "USED",
+  "EXPIRED",
+]);
+
 export const agentInvitationStatusEnum = pgEnum("agent_invitation_status", [
   "PENDING",
   "ACCEPTED",
@@ -1033,6 +1044,48 @@ export const workOrders = pgTable(
   }),
 );
 
+/* =========================================================
+   OTPS (Verification Codes)
+========================================================= */
+
+export const otps = pgTable(
+  "otps",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, {
+        onDelete: "cascade", // If user is deleted, delete their OTPs
+        onUpdate: "cascade",
+      }),
+
+    code: varchar("code", { length: 6 }).notNull(),
+
+    type: otpTypeEnum("type").notNull().default("ACCOUNT_VERIFICATION"),
+
+    status: otpStatusEnum("status").notNull().default("PENDING"),
+
+    expiresAt: timestamp("expires_at", {
+      withTimezone: true,
+    }).notNull(),
+
+    createdAt: timestamp("created_at", {
+      withTimezone: true,
+    })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    userIndex: index("otps_user_id_idx").on(table.userId),
+    codeIndex: index("otps_code_idx").on(table.code),
+  }),
+);
+
+/* =========================================================
+   AUTH SESSIONS
+========================================================= */
+
 export const authSessions = pgTable(
   "auth_sessions",
   {
@@ -1367,3 +1420,6 @@ export type NewTechnician = typeof technicians.$inferInsert;
 
 export type WorkOrder = typeof workOrders.$inferSelect;
 export type NewWorkOrder = typeof workOrders.$inferInsert;
+
+export type Otp = typeof otps.$inferSelect;
+export type NewOtp = typeof otps.$inferInsert;

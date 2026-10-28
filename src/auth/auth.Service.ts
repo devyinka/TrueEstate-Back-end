@@ -12,6 +12,7 @@ import {
   agents,
   technicians,
   landlordAgents,
+  otps,
 } from "../db/schema.js";
 
 import { hashPassword, verifyPassword } from "./password.js";
@@ -21,6 +22,8 @@ import {
   signRefreshToken,
   verifyRefreshToken,
 } from "./Jwt.js";
+
+import { emailService } from "../thirdparty_services/emailOTP.js";
 
 import type { LoginInput, RegisterInput } from "./auth.type.js";
 
@@ -69,6 +72,90 @@ export const authService = {
     return {
       accessToken,
       refreshToken,
+    };
+  },
+
+  generateVerificationOtp: async (userId: string) => {
+    //  Generate a random 6-digit code
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+
+    //  Set expiration to 15 minutes from now
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+    //  Invalidate any existing pending OTPs for this user
+    await db
+      .update(otps)
+      .set({ status: "EXPIRED" })
+      .where(and(eq(otps.userId, userId), eq(otps.status, "PENDING")));
+
+    //  Save the new OTP
+    const [newOtp] = await db
+      .insert(otps)
+      .values({
+        userId,
+        code,
+        type: "ACCOUNT_VERIFICATION",
+        status: "PENDING",
+        expiresAt,
+      })
+      .returning();
+    const user = await db.query.users.findFirst({
+      where: eq(users.id, userId),
+    });
+
+    if (user?.email) {
+      await emailService.sendOtpEmail(user.email, code, user.firstName);
+    }
+
+    return newOtp;
+  },
+
+  //  Verify the user's account using the OTP
+  verifyAccountOtp: async (userId: string, code: string) => {
+    //  Find the OTP
+    const otp = await db.query.otps.findFirst({
+      where: and(
+        eq(otps.userId, userId),
+        eq(otps.code, code),
+        eq(otps.type, "ACCOUNT_VERIFICATION"),
+        eq(otps.status, "PENDING"),
+      ),
+    });
+
+    if (!otp) {
+      throw new AppError("Invalid verification code", 400);
+    }
+
+    if (otp.expiresAt < new Date()) {
+      await db
+        .update(otps)
+        .set({ status: "EXPIRED" })
+        .where(eq(otps.id, otp.id));
+      throw new AppError("Verification code has expired", 400);
+    }
+
+    // 2. Mark OTP as used and User as ACTIVE in a transaction
+    const verifiedUser = await db.transaction(async (tx) => {
+      await tx
+        .update(otps)
+        .set({ status: "USED", updatedAt: new Date() } as any)
+        .where(eq(otps.id, otp.id));
+
+      const [updatedUser] = await tx
+        .update(users)
+        .set({ status: "ACTIVE", updatedAt: new Date() })
+        .where(eq(users.id, userId))
+        .returning();
+
+      return updatedUser;
+    });
+
+    // 3. Generate fresh tokens now that they are ACTIVE
+    const tokens = await authService.createSession(verifiedUser);
+
+    return {
+      user: sanitizeUser(verifiedUser),
+      ...tokens,
     };
   },
 
@@ -361,9 +448,15 @@ export const authService = {
     // CREATE AUTH SESSION
     const tokens = await authService.createSession(user);
 
+    // GENERATE OTP FOR ACCOUNT VERIFICATION
+    const otp = await authService.generateVerificationOtp(user.id);
+
     return {
       user: sanitizeUser(user),
       ...tokens,
+
+      // i will delete this in production
+      devOtpCode: otp.code,
     };
   },
 

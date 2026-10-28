@@ -2,7 +2,15 @@ import crypto from "node:crypto";
 import { and, eq } from "drizzle-orm";
 
 import { db } from "../db/index.js";
-import { landlords, tenantInvitations, users, tenants } from "../db/schema.js";
+import {
+  landlords,
+  properties,
+  tenantInvitations,
+  users,
+  tenants,
+  tenancies,
+  units,
+} from "../db/schema.js";
 import { AppError } from "../errors/appError.js";
 import type {
   AcceptTenantInvitationInput,
@@ -30,12 +38,37 @@ export const tenantInvitationService = {
       throw new AppError("Email or phone is required", 400);
     }
 
+    if (
+      input.unitId &&
+      (!input.startDate || !input.rentAmount || !input.rentFrequency)
+    ) {
+      throw new AppError(
+        "Unit, start date, rent amount, and rent frequency are required together",
+        400,
+      );
+    }
+
     const landlord = await db.query.landlords.findFirst({
       where: eq(landlords.userId, userId),
     });
 
     if (!landlord) {
       throw new AppError("Landlord profile not found", 404);
+    }
+
+    if (input.unitId) {
+      const unit = await db
+        .select({ id: units.id })
+        .from(units)
+        .innerJoin(properties, eq(units.propertyId, properties.id))
+        .where(
+          and(eq(units.id, input.unitId), eq(properties.landlordId, landlord.id)),
+        )
+        .limit(1);
+
+      if (!unit[0]) {
+        throw new AppError("Unit not found or not owned by this landlord", 404);
+      }
     }
 
     let existingUser = null;
@@ -92,6 +125,13 @@ export const tenantInvitationService = {
         landlordId: landlord.id,
         email,
         phone,
+        unitId: input.unitId ?? null,
+        startDate: input.startDate ? new Date(input.startDate) : null,
+        endDate: input.endDate ? new Date(input.endDate) : null,
+        rentAmount: input.rentAmount ?? null,
+        rentFrequency: input.rentFrequency ?? null,
+        depositAmount: input.depositAmount ?? null,
+        serviceCharge: input.serviceCharge ?? null,
         tokenHash,
         status: "PENDING",
         expiresAt: calculateInvitationExpiry(),
@@ -212,6 +252,32 @@ export const tenantInvitationService = {
 
       if (!acceptedInvitation) {
         throw new AppError("Invitation is no longer available", 409);
+      }
+
+      if (
+        acceptedInvitation.unitId &&
+        acceptedInvitation.startDate &&
+        acceptedInvitation.rentAmount &&
+        acceptedInvitation.rentFrequency
+      ) {
+        const [createdTenancy] = await transaction
+          .insert(tenancies)
+          .values({
+            tenantId: tenant.id,
+            unitId: acceptedInvitation.unitId,
+            startDate: acceptedInvitation.startDate,
+            endDate: acceptedInvitation.endDate,
+            status: "PENDING",
+            rentAmount: acceptedInvitation.rentAmount,
+            rentFrequency: acceptedInvitation.rentFrequency,
+            depositAmount: acceptedInvitation.depositAmount ?? "0",
+            serviceCharge: acceptedInvitation.serviceCharge ?? "0",
+          })
+          .returning();
+
+        if (!createdTenancy) {
+          throw new AppError("Failed to create tenancy", 500);
+        }
       }
 
       return {

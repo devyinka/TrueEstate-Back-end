@@ -708,6 +708,36 @@ export const tenantInvitations = pgTable(
 
     phone: varchar("phone", { length: 30 }),
 
+    unitId: uuid("unit_id").references(() => units.id, {
+      onDelete: "restrict",
+      onUpdate: "cascade",
+    }),
+
+    startDate: timestamp("start_date", {
+      withTimezone: true,
+    }),
+
+    endDate: timestamp("end_date", {
+      withTimezone: true,
+    }),
+
+    rentAmount: numeric("rent_amount", {
+      precision: 14,
+      scale: 2,
+    }),
+
+    rentFrequency: rentFrequencyEnum("rent_frequency"),
+
+    depositAmount: numeric("deposit_amount", {
+      precision: 14,
+      scale: 2,
+    }),
+
+    serviceCharge: numeric("service_charge", {
+      precision: 14,
+      scale: 2,
+    }),
+
     tokenHash: text("token_hash").notNull(),
 
     status: tenantInvitationStatusEnum("status").notNull().default("PENDING"),

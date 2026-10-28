@@ -14,6 +14,12 @@ const phoneSchema = z
     "Phone number must be in international format, e.g. +2348012345678",
   );
 
+const uuidSchema = z.string().uuid("Must be a valid UUID");
+const moneySchema = z
+  .string()
+  .regex(/^\d+(\.\d{1,2})?$/, "Must be a valid amount");
+const dateSchema = z.string().datetime({ offset: true });
+
 export const createTenantInvitationSchema = z
   .object({
     email: z
@@ -24,7 +30,17 @@ export const createTenantInvitationSchema = z
       .optional(),
 
     phone: phoneSchema.optional(),
+    unitId: uuidSchema.optional(),
+    startDate: dateSchema.optional(),
+    endDate: dateSchema.optional(),
+    rentAmount: moneySchema.optional(),
+    rentFrequency: z
+      .enum(["MONTHLY", "QUARTERLY", "BI_ANNUAL", "ANNUAL", "CUSTOM"])
+      .optional(),
+    depositAmount: moneySchema.optional(),
+    serviceCharge: moneySchema.optional(),
   })
+  .strict()
   .refine((data) => Boolean(data.email || data.phone), {
     message: "Email or phone is required",
     path: ["email"],

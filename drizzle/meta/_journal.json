@@ -43,6 +43,13 @@
       "when": 1792548018269,
       "tag": "0005_harsh_prowler",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793177984394,
+      "tag": "0006_strange_sentinel",
+      "breakpoints": true
     }
   ]
 }

@@ -220,7 +220,7 @@ export const authService = {
           phone,
           passwordHash,
           role: input.role,
-          status: "ACTIVE",
+          status: "PENDING",
         })
         .returning();
 

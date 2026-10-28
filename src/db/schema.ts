@@ -31,6 +31,7 @@ export const userStatusEnum = pgEnum("user_status", [
   "INVITED",
   "SUSPENDED",
   "DEACTIVATED",
+  "PENDING",
 ]);
 
 export const unitTypeEnum = pgEnum("unit_type", [
@@ -1163,17 +1164,14 @@ export const agentsRelations = relations(agents, ({ one, many }) => ({
   landlordAgents: many(landlordAgents),
 }));
 
-export const techniciansRelations = relations(
-  technicians,
-  ({ one, many }) => ({
-    user: one(users, {
-      fields: [technicians.userId],
-      references: [users.id],
-    }),
-
-    workOrders: many(workOrders),
+export const techniciansRelations = relations(technicians, ({ one, many }) => ({
+  user: one(users, {
+    fields: [technicians.userId],
+    references: [users.id],
   }),
-);
+
+  workOrders: many(workOrders),
+}));
 
 export const landlordAgentsRelations = relations(
   landlordAgents,

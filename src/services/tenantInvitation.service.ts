@@ -11,6 +11,7 @@ import {
   tenancies,
   units,
 } from "../db/schema.js";
+import { emailService } from "../thirdparty_services/emailService.js";
 import { AppError } from "../errors/appError.js";
 import type {
   AcceptTenantInvitationInput,
@@ -62,7 +63,10 @@ export const tenantInvitationService = {
         .from(units)
         .innerJoin(properties, eq(units.propertyId, properties.id))
         .where(
-          and(eq(units.id, input.unitId), eq(properties.landlordId, landlord.id)),
+          and(
+            eq(units.id, input.unitId),
+            eq(properties.landlordId, landlord.id),
+          ),
         )
         .limit(1);
 
@@ -140,6 +144,20 @@ export const tenantInvitationService = {
 
     if (!invitation) {
       throw new AppError("Failed to create tenant invitation", 500);
+    }
+
+    if (email) {
+      const landlordUser = await db.query.users.findFirst({
+        where: eq(users.id, userId),
+        columns: { firstName: true, lastName: true },
+      });
+
+      const landlordName = landlordUser
+        ? `${landlordUser.firstName} ${landlordUser.lastName}`
+        : "A TrueEstate Landlord";
+
+      // Send the email (does not block or crash if Resend fails)
+      await emailService.sendTenantInvitation(email, landlordName, token);
     }
 
     return {

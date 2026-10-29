@@ -23,7 +23,7 @@ import {
   verifyRefreshToken,
 } from "./Jwt.js";
 
-import { emailService } from "../thirdparty_services/emailOTP.js";
+import { emailService } from "../thirdparty_services/emailService.js";
 
 import type { LoginInput, RegisterInput } from "./auth.type.js";
 

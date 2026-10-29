@@ -13,6 +13,8 @@ import { AppError } from "../errors/appError.js";
 
 import type { CreateAgentInvitationInput } from "../types/agent.type.js";
 
+import { emailService } from "../thirdparty_services/emailService.js";
+
 import { generateToken, hashToken } from "../lib/crypo.js";
 
 export const agentInvitationService = {
@@ -117,6 +119,20 @@ export const agentInvitationService = {
       throw new AppError("Failed to create agent invitation", 500);
     }
 
+    if (email) {
+      // Fetch the landlord's user details for the email personalization
+      const landlordUser = await db.query.users.findFirst({
+        where: eq(users.id, userId),
+        columns: { firstName: true, lastName: true },
+      });
+
+      const landlordName = landlordUser
+        ? `${landlordUser.firstName} ${landlordUser.lastName}`
+        : "A TrueEstate Landlord";
+
+      // send the agent invitation email using the emailService
+      await emailService.sendAgentInvitation(email, landlordName, token);
+    }
     return {
       invitation,
       token,

@@ -3,9 +3,12 @@ import type { NextFunction, Request, Response } from "express";
 import { authService } from "./auth.Service";
 
 import {
+  changePasswordSchema,
+  forgotPasswordSchema,
   loginSchema,
   refreshSchema,
   registerSchema,
+  resetPasswordSchema,
   verifyOtpSchema,
 } from "./auth.Routes.js";
 
@@ -75,3 +78,42 @@ export async function logout(req: Request, res: Response) {
     message: "Logged out successfully",
   });
 }
+
+export const forgotPassword = async (req: Request, res: Response) => {
+  const { identifier } = forgotPasswordSchema.parse(req.body);
+
+  const result = await authService.forgotPassword(identifier);
+
+  return res.status(200).json({
+    success: true,
+    message: result.message,
+  });
+};
+
+export const resetPassword = async (req: Request, res: Response) => {
+  const { identifier, code, newPassword } = resetPasswordSchema.parse(req.body);
+
+  const result = await authService.resetPassword(identifier, code, newPassword);
+
+  return res.status(200).json({
+    success: true,
+    message: result.message,
+  });
+};
+
+// CHANGE PASSWORD (Logged in user updating password in Settings)
+export const changePassword = async (req: Request, res: Response) => {
+  const { currentPassword, newPassword } = changePasswordSchema.parse(req.body);
+
+  // req.user!.id comes from your requireAuth middleware
+  const result = await authService.changePassword(
+    req.user!.id,
+    currentPassword,
+    newPassword,
+  );
+
+  return res.status(200).json({
+    success: true,
+    message: result.message,
+  });
+};

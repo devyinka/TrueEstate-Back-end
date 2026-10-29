@@ -2,10 +2,13 @@ import { Router } from "express";
 import { z } from "zod";
 
 import {
+  changePassword,
+  forgotPassword,
   login,
   logout,
   refresh,
   register,
+  resetPassword,
   verifyAccount,
 } from "./auth.Controller.js";
 
@@ -15,6 +18,9 @@ import {
   loginRateLimiter,
   refreshRateLimiter,
   registerRateLimiter,
+  forgotPasswordRateLimiter,
+  resetPasswordRateLimiter,
+  changePasswordRateLimiter,
   otpRateLimiter,
 } from "./auth.ratelimit.js";
 
@@ -85,7 +91,22 @@ export const loginSchema = z.object({
 });
 
 export const refreshSchema = z.object({
-  refreshToken: z.string().min(1, "Refresh token is required"),
+  refreshToken: z.string().trim().min(1, "Refresh token is required"),
+});
+
+export const forgotPasswordSchema = z.object({
+  identifier: z.string().trim().min(1, "Email or phone is required"),
+});
+
+export const resetPasswordSchema = z.object({
+  identifier: z.string().trim().min(1, "Email or phone is required"),
+  code: z.string().length(6, "Code must be exactly 6 digits"),
+  newPassword: z.string().min(8, "Password must be at least 8 characters"),
+});
+
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1, "Current password is required"),
+  newPassword: z.string().min(8, "New password must be at least 8 characters"),
 });
 
 const router = Router();
@@ -97,6 +118,12 @@ router.post("/login", loginRateLimiter, login);
 router.post("/refresh", refreshRateLimiter, refresh);
 
 router.post("/verify", otpRateLimiter, verifyAccount);
+
+router.post("/forgot-password", forgotPasswordRateLimiter, forgotPassword);
+
+router.post("/reset-password", resetPasswordRateLimiter, resetPassword);
+
+router.post("/change-password", requireAuth, changePassword);
 
 router.post("/logout", requireAuth, logout);
 

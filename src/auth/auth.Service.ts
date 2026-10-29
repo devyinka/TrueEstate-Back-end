@@ -47,6 +47,9 @@ function sanitizeUser(user: typeof users.$inferSelect) {
   };
 }
 export const authService = {
+  //==========================================
+  // CREATE AND MANAGE SESSIONS
+  // ==========================================
   createSession: async (user: typeof users.$inferSelect) => {
     const sessionId = generateSessionId();
 
@@ -75,6 +78,9 @@ export const authService = {
     };
   },
 
+  //==========================================
+  // OTP GENERATION AND MANAGEMEN
+  // ==========================================
   generateVerificationOtp: async (userId: string) => {
     //  Generate a random 6-digit code
     const code = Math.floor(100000 + Math.random() * 900000).toString();
@@ -110,7 +116,9 @@ export const authService = {
     return newOtp;
   },
 
-  //  Verify the user's account using the OTP
+  //==========================================
+  // OTP VERIFICATION AND ACCOUNT ACTIVATION
+  // ==========================================
   verifyAccountOtp: async (userId: string, code: string) => {
     //  Find the OTP
     const otp = await db.query.otps.findFirst({
@@ -176,6 +184,10 @@ export const authService = {
       ...tokens,
     };
   },
+
+  //==========================================
+  // ACCOUNT REGISTRATION
+  // ==========================================
 
   registerUser: async (input: RegisterInput) => {
     const email = input.email?.trim().toLowerCase() ?? null;
@@ -474,10 +486,13 @@ export const authService = {
       ...tokens,
 
       // i will delete this in production
-      devOtpCode: otp.code,
+      // devOtpCode: otp.code,
     };
   },
 
+  //==========================================
+  // ACCOUNT LOGIN
+  // ==========================================
   loginUser: async (input: LoginInput) => {
     const identifier = input.identifier.trim();
 
@@ -513,6 +528,9 @@ export const authService = {
       ...tokens,
     };
   },
+  //==========================================
+  // SESSION REFRESH
+  // ==========================================
 
   refreshSession: async (refreshToken: string) => {
     const payload = verifyRefreshToken(refreshToken);
@@ -595,6 +613,10 @@ export const authService = {
     };
   },
 
+  //==========================================
+  // LOGOUT AND SESSION REVOCATION
+  // ==========================================
+
   logoutSession: async (sessionId: string) => {
     await db
       .update(authSessions)
@@ -603,5 +625,163 @@ export const authService = {
         revokedAt: new Date(),
       })
       .where(eq(authSessions.id, sessionId));
+  },
+
+  // ==========================================
+  // PASSWORD MANAGEMENT
+  // ==========================================
+
+  forgotPassword: async (emailInput: string) => {
+    const email = emailInput.trim().toLowerCase();
+
+    const user = await db.query.users.findFirst({
+      where: eq(users.email, email),
+    });
+
+    if (!user) {
+      // I throw a generic error so attackers can't "guess" registered emails
+      throw new AppError(
+        "If an account exists, a reset email has been sent.",
+        404,
+      );
+    }
+
+    // Generate a random 6-digit code
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+
+    // Invalidate any existing pending reset OTPs for this user
+    await db
+      .update(otps)
+      .set({ status: "EXPIRED" })
+      .where(
+        and(
+          eq(otps.userId, user.id),
+          eq(otps.type, "PASSWORD_RESET"),
+          eq(otps.status, "PENDING"),
+        ),
+      );
+
+    // Save the new OTP
+    await db.insert(otps).values({
+      userId: user.id,
+      code,
+      type: "PASSWORD_RESET",
+      status: "PENDING",
+      expiresAt,
+    });
+
+    if (user.email) {
+      await emailService.sendPasswordResetEmail(
+        user.email,
+        code,
+        user.firstName,
+      );
+    }
+
+    return {
+      message: "If an account exists, a password reset code has been sent.",
+    };
+  },
+
+  resetPassword: async (
+    emailInput: string,
+    code: string,
+    newPassword: string,
+  ) => {
+    const email = emailInput.trim().toLowerCase();
+
+    const user = await db.query.users.findFirst({
+      where: eq(users.email, email),
+    });
+
+    if (!user) {
+      throw new AppError("Invalid reset request", 400);
+    }
+
+    // Find the pending OTP
+    const otp = await db.query.otps.findFirst({
+      where: and(
+        eq(otps.userId, user.id),
+        eq(otps.code, code.trim()),
+        eq(otps.type, "PASSWORD_RESET"),
+        eq(otps.status, "PENDING"),
+      ),
+    });
+
+    if (!otp) {
+      throw new AppError("Invalid verification code", 400);
+    }
+
+    if (otp.expiresAt < new Date()) {
+      await db
+        .update(otps)
+        .set({ status: "EXPIRED" })
+        .where(eq(otps.id, otp.id));
+      throw new AppError("Verification code has expired", 400);
+    }
+
+    const passwordHash = await hashPassword(newPassword);
+
+    // Consume OTP and update password in a transaction to prevent race conditions
+    await db.transaction(async (tx) => {
+      await tx
+        .update(otps)
+        .set({ status: "USED", updatedAt: new Date() } as any)
+        .where(eq(otps.id, otp.id));
+
+      await tx
+        .update(users)
+        .set({
+          passwordHash, // Using your exact schema column name
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, user.id));
+    });
+
+    return {
+      success: true,
+      message: "Password has been successfully reset. You can now log in.",
+    };
+  },
+
+  changePassword: async (
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+  ) => {
+    const user = await db.query.users.findFirst({
+      where: eq(users.id, userId),
+    });
+
+    if (!user || !user.passwordHash) {
+      throw new AppError("User not found", 404);
+    }
+
+    // Verify current password using your custom utility
+    const validPassword = await verifyPassword(
+      user.passwordHash,
+      currentPassword,
+    );
+
+    if (!validPassword) {
+      throw new AppError("The current password you entered is incorrect", 400);
+    }
+
+    // Hash and save new password
+    const newPasswordHash = await hashPassword(newPassword);
+
+    await db
+      .update(users)
+      .set({
+        passwordHash: newPasswordHash,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, userId));
+
+    return {
+      success: true,
+      message: "Password changed successfully",
+    };
   },
 };

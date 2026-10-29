@@ -106,3 +106,41 @@ export const otpRateLimiter = rateLimit({
     message: "Too many verification attempts, please try again later",
   },
 });
+
+/**
+ * Reset password (Submit code + new password)
+ *
+ * Protects against brute-forcing the 6-digit reset code.
+ * Tied to the 15-minute expiration window of the OTP.
+ */
+export const resetPasswordRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5,
+
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+
+  message: {
+    success: false,
+    message: "Too many password reset attempts. Please request a new code.",
+  },
+});
+
+/**
+ * Change password (Authenticated)
+ *
+ * Prevents account takeover scripts from rapidly guessing
+ * the current password on a compromised active session.
+ */
+export const changePasswordRateLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 5,
+
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+
+  message: {
+    success: false,
+    message: "Too many password change attempts. Please try again later.",
+  },
+});

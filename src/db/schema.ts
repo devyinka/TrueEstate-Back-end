@@ -76,6 +76,8 @@ export const tenantInvitationStatusEnum = pgEnum("tenant_invitation_status", [
 export const otpTypeEnum = pgEnum("otp_type", [
   "ACCOUNT_VERIFICATION",
   "PASSWORD_RESET",
+  "TWO_FACTOR_AUTH",
+  "EMAIL_CHANGE",
 ]);
 
 export const otpStatusEnum = pgEnum("otp_status", [
@@ -1056,7 +1058,7 @@ export const otps = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id, {
-        onDelete: "cascade", // If user is deleted, delete their OTPs
+        onDelete: "cascade",
         onUpdate: "cascade",
       }),
 

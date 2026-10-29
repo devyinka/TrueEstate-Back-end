@@ -94,4 +94,38 @@ export const emailService = {
       console.error("Failed to send agent invitation email:", error);
     }
   },
+
+  sendPasswordResetEmail: async (
+    toEmail: string,
+    resetCode: string,
+    firstName: string,
+  ) => {
+    try {
+      await resend.emails.send({
+        from: "TrueEstate <no-reply@" + RESEND_DOMAIN_NAME + ">",
+        to: toEmail,
+        subject: "Reset your TrueEstate Password",
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+            <h2 style="color: #08745f;">Password Reset Request</h2>
+            <p>Hello ${firstName},</p>
+            <p>We received a request to reset your TrueEstate password. Enter the following 6-digit code in the app to reset it:</p>
+            
+            <div style="background-color: #f0fbf5; padding: 20px; border-radius: 8px; text-align: center; margin: 24px 0;">
+              <span style="font-size: 32px; font-weight: bold; letter-spacing: 4px; color: #0f172a;">
+                ${resetCode}
+              </span>
+            </div>
+            
+            <p>This code will expire in 15 minutes.</p>
+            <p style="margin-top: 32px; font-size: 14px; color: #666;">
+              If you did not request a password reset, please ignore this email or contact support if you have concerns.
+            </p>
+          </div>
+        `,
+      });
+    } catch (error) {
+      console.error("Failed to send password reset email:", error);
+    }
+  },
 };

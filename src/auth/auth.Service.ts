@@ -1,7 +1,5 @@
 import { and, eq, gt } from "drizzle-orm";
-
 import { db } from "../db/index.js";
-
 import {
   authSessions,
   tenantInvitations,
@@ -14,24 +12,28 @@ import {
   landlordAgents,
   otps,
 } from "../db/schema.js";
-
 import { hashPassword, verifyPassword } from "./password.js";
-
 import {
   signAccessToken,
   signRefreshToken,
   verifyRefreshToken,
 } from "./Jwt.js";
-
 import { emailService } from "../thirdparty_services/emailService.js";
-
 import type { LoginInput, RegisterInput } from "./auth.type.js";
-
 import { env } from "../config/env.js";
-
 import { AppError } from "../errors/appError.js";
 import { calculateExpiryDate } from "../lib/helper.js";
 import { generateSessionId, hashToken } from "../lib/crypo.js";
+
+// ==========================================
+// SOCIAL AUTH IMPORTS
+// ==========================================
+import { OAuth2Client } from "google-auth-library";
+import appleSignin from "apple-signin-auth";
+import crypto from "crypto";
+
+// Initialize Google Client (ensure GOOGLE_WEB_CLIENT_ID is in your .env / env.js)
+const googleClient = new OAuth2Client(process.env.GOOGLE_WEB_CLIENT_ID);
 
 function sanitizeUser(user: typeof users.$inferSelect) {
   return {
@@ -46,6 +48,7 @@ function sanitizeUser(user: typeof users.$inferSelect) {
     updatedAt: user.updatedAt,
   };
 }
+
 export const authService = {
   //==========================================
   // CREATE AND MANAGE SESSIONS
@@ -79,22 +82,17 @@ export const authService = {
   },
 
   //==========================================
-  // OTP GENERATION AND MANAGEMEN
+  // OTP GENERATION AND MANAGEMENT
   // ==========================================
   generateVerificationOtp: async (userId: string) => {
-    //  Generate a random 6-digit code
     const code = Math.floor(100000 + Math.random() * 900000).toString();
-
-    //  Set expiration to 15 minutes from now
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
 
-    //  Invalidate any existing pending OTPs for this user
     await db
       .update(otps)
       .set({ status: "EXPIRED" })
       .where(and(eq(otps.userId, userId), eq(otps.status, "PENDING")));
 
-    //  Save the new OTP
     const [newOtp] = await db
       .insert(otps)
       .values({
@@ -105,6 +103,7 @@ export const authService = {
         expiresAt,
       })
       .returning();
+
     const user = await db.query.users.findFirst({
       where: eq(users.id, userId),
     });
@@ -120,7 +119,6 @@ export const authService = {
   // OTP VERIFICATION AND ACCOUNT ACTIVATION
   // ==========================================
   verifyAccountOtp: async (userId: string, code: string) => {
-    //  Find the OTP
     const otp = await db.query.otps.findFirst({
       where: and(
         eq(otps.userId, userId),
@@ -130,9 +128,7 @@ export const authService = {
       ),
     });
 
-    if (!otp) {
-      throw new AppError("Invalid verification code", 400);
-    }
+    if (!otp) throw new AppError("Invalid verification code", 400);
 
     if (otp.expiresAt < new Date()) {
       await db
@@ -142,7 +138,6 @@ export const authService = {
       throw new AppError("Verification code has expired", 400);
     }
 
-    //  Mark OTP as used and User as ACTIVE in a transaction
     const verifiedUser = await db.transaction(async (tx) => {
       await tx
         .update(otps)
@@ -163,12 +158,18 @@ export const authService = {
     if (verifiedUser.email) {
       if (verifiedUser.role === "TENANT") {
         const invite = await db.query.tenantInvitations.findFirst({
-          where: eq(tenantInvitations.email, verifiedUser.email),
+          where: and(
+            eq(tenantInvitations.email, verifiedUser.email),
+            eq(tenantInvitations.status, "PENDING"),
+          ),
         });
         hasPendingInvitation = !!invite;
       } else if (verifiedUser.role === "AGENT") {
         const invite = await db.query.agentInvitations.findFirst({
-          where: eq(agentInvitations.email, verifiedUser.email),
+          where: and(
+            eq(agentInvitations.email, verifiedUser.email),
+            eq(agentInvitations.status, "PENDING"),
+          ),
         });
         hasPendingInvitation = !!invite;
       }
@@ -186,9 +187,8 @@ export const authService = {
   },
 
   //==========================================
-  // ACCOUNT REGISTRATION
+  // ACCOUNT REGISTRATION (EMAIL/PASSWORD)
   // ==========================================
-
   registerUser: async (input: RegisterInput) => {
     const email = input.email?.trim().toLowerCase() ?? null;
     const phone = input.phone?.trim() ?? null;
@@ -197,23 +197,18 @@ export const authService = {
       const existingEmail = await db.query.users.findFirst({
         where: eq(users.email, email),
       });
-
-      if (existingEmail) {
+      if (existingEmail)
         throw new AppError("An account with this email already exists", 409);
-      }
     }
 
     if (phone) {
       const existingPhone = await db.query.users.findFirst({
         where: eq(users.phone, phone),
       });
-
-      if (existingPhone) {
+      if (existingPhone)
         throw new AppError("An account with this phone already exists", 409);
-      }
     }
 
-    // INVITATION TOKEN VALIDATION
     if (
       input.invitationToken &&
       input.role !== "TENANT" &&
@@ -231,37 +226,27 @@ export const authService = {
       let tenantInvitation = null;
       let agentInvitation = null;
 
-      // TENANT OR AGENT INVITATION VALIDATION
       if (input.invitationToken) {
         const tokenHash = hashToken(input.invitationToken);
 
-        // TENANT INVITATION
         if (input.role === "TENANT") {
           tenantInvitation =
             await transaction.query.tenantInvitations.findFirst({
               where: eq(tenantInvitations.tokenHash, tokenHash),
             });
-
-          if (!tenantInvitation) {
+          if (!tenantInvitation)
             throw new AppError("Invalid tenant invitation token", 400);
-          }
-
-          if (tenantInvitation.status !== "PENDING") {
+          if (tenantInvitation.status !== "PENDING")
             throw new AppError(
               "This tenant invitation is no longer available",
               400,
             );
-          }
 
           if (tenantInvitation.expiresAt <= new Date()) {
             await transaction
               .update(tenantInvitations)
-              .set({
-                status: "EXPIRED",
-                updatedAt: new Date(),
-              })
+              .set({ status: "EXPIRED", updatedAt: new Date() })
               .where(eq(tenantInvitations.id, tenantInvitation.id));
-
             throw new AppError("This tenant invitation has expired", 400);
           }
 
@@ -269,44 +254,32 @@ export const authService = {
             tenantInvitation.email &&
             email &&
             tenantInvitation.email.toLowerCase() === email;
-
           const phoneMatches =
             tenantInvitation.phone && phone && tenantInvitation.phone === phone;
-
-          if (!emailMatches && !phoneMatches) {
+          if (!emailMatches && !phoneMatches)
             throw new AppError(
               "Your email or phone does not match the invitation",
               403,
             );
-          }
         }
 
-        // AGENT INVITATION
         if (input.role === "AGENT") {
           agentInvitation = await transaction.query.agentInvitations.findFirst({
             where: eq(agentInvitations.tokenHash, tokenHash),
           });
-
-          if (!agentInvitation) {
+          if (!agentInvitation)
             throw new AppError("Invalid agent invitation token", 400);
-          }
-
-          if (agentInvitation.status !== "PENDING") {
+          if (agentInvitation.status !== "PENDING")
             throw new AppError(
               "This agent invitation is no longer available",
               400,
             );
-          }
 
           if (agentInvitation.expiresAt <= new Date()) {
             await transaction
               .update(agentInvitations)
-              .set({
-                status: "EXPIRED",
-                updatedAt: new Date(),
-              })
+              .set({ status: "EXPIRED", updatedAt: new Date() })
               .where(eq(agentInvitations.id, agentInvitation.id));
-
             throw new AppError("This agent invitation has expired", 400);
           }
 
@@ -314,20 +287,16 @@ export const authService = {
             agentInvitation.email &&
             email &&
             agentInvitation.email.toLowerCase() === email;
-
           const phoneMatches =
             agentInvitation.phone && phone && agentInvitation.phone === phone;
-
-          if (!emailMatches && !phoneMatches) {
+          if (!emailMatches && !phoneMatches)
             throw new AppError(
               "Your email or phone does not match the invitation",
               403,
             );
-          }
         }
       }
 
-      // CREATE USER
       const [createdUser] = await transaction
         .insert(users)
         .values({
@@ -341,71 +310,44 @@ export const authService = {
         })
         .returning();
 
-      if (!createdUser) {
-        throw new AppError("Failed to create user", 500);
-      }
+      if (!createdUser) throw new AppError("Failed to create user", 500);
 
-      // LANDLORD PROFILE
       if (input.role === "LANDLORD") {
         const [landlord] = await transaction
           .insert(landlords)
-          .values({
-            userId: createdUser.id,
-          })
+          .values({ userId: createdUser.id })
           .returning();
-
-        if (!landlord) {
+        if (!landlord)
           throw new AppError("Failed to create landlord profile", 500);
-        }
       }
 
-      // AGENT PROFILE
       let createdAgent = null;
-
       if (input.role === "AGENT") {
         const [agent] = await transaction
           .insert(agents)
-          .values({
-            userId: createdUser.id,
-          })
+          .values({ userId: createdUser.id })
           .returning();
-
-        if (!agent) {
-          throw new AppError("Failed to create agent profile", 500);
-        }
-
+        if (!agent) throw new AppError("Failed to create agent profile", 500);
         createdAgent = agent;
       }
 
-      // TENANT PROFILE
       if (input.role === "TENANT") {
         const [tenant] = await transaction
           .insert(tenants)
-          .values({
-            userId: createdUser.id,
-          })
+          .values({ userId: createdUser.id })
           .returning();
-
-        if (!tenant) {
-          throw new AppError("Failed to create tenant profile", 500);
-        }
+        if (!tenant) throw new AppError("Failed to create tenant profile", 500);
       }
 
-      // TECHNICIAN PROFILE
       if (input.role === "TECHNICIAN") {
         const [technician] = await transaction
           .insert(technicians)
-          .values({
-            userId: createdUser.id,
-          })
+          .values({ userId: createdUser.id })
           .returning();
-
-        if (!technician) {
+        if (!technician)
           throw new AppError("Failed to create technician profile", 500);
-        }
       }
 
-      // ACCEPT TENANT INVITATION
       if (tenantInvitation) {
         const [acceptedInvitation] = await transaction
           .update(tenantInvitations)
@@ -421,19 +363,11 @@ export const authService = {
             ),
           )
           .returning();
-
-        if (!acceptedInvitation) {
+        if (!acceptedInvitation)
           throw new AppError("Tenant invitation is no longer available", 409);
-        }
       }
 
-      // ACCEPT AGENT INVITATION
-      if (agentInvitation) {
-        if (!createdAgent) {
-          throw new AppError("Agent profile was not created", 500);
-        }
-
-        // CREATE THE ACTUAL LANDLORD-AGENT RELATIONSHIP
+      if (agentInvitation && createdAgent) {
         const [relationship] = await transaction
           .insert(landlordAgents)
           .values({
@@ -443,15 +377,12 @@ export const authService = {
             acceptedAt: new Date(),
           })
           .returning();
-
-        if (!relationship) {
+        if (!relationship)
           throw new AppError(
             "Failed to create landlord-agent relationship",
             500,
           );
-        }
 
-        // MARK THE INVITATION AS ACCEPTED
         const [acceptedInvitation] = await transaction
           .update(agentInvitations)
           .set({
@@ -466,27 +397,293 @@ export const authService = {
             ),
           )
           .returning();
-
-        if (!acceptedInvitation) {
+        if (!acceptedInvitation)
           throw new AppError("Agent invitation is no longer available", 409);
-        }
       }
 
       return createdUser;
     });
 
-    // CREATE AUTH SESSION
     const tokens = await authService.createSession(user);
-
-    // GENERATE OTP FOR ACCOUNT VERIFICATION
-    const otp = await authService.generateVerificationOtp(user.id);
+    await authService.generateVerificationOtp(user.id);
 
     return {
       user: sanitizeUser(user),
       ...tokens,
+    };
+  },
 
-      // i will delete this in production
-      // devOtpCode: otp.code,
+  //==========================================
+  // SOCIAL AUTHENTICATION (GOOGLE & APPLE)
+  // ==========================================
+  handleSocialAuth: async (input: {
+    idToken: string;
+    provider: "GOOGLE" | "APPLE";
+    role?: "LANDLORD" | "AGENT" | "TENANT" | "TECHNICIAN";
+    invitationToken?: string;
+    firstName?: string;
+    lastName?: string;
+  }) => {
+    let email: string;
+    let firstName = input.firstName?.trim() || "User";
+    let lastName = input.lastName?.trim() || "";
+
+    // VERIFY TOKEN
+    if (input.provider === "GOOGLE") {
+      const ticket = await googleClient.verifyIdToken({
+        idToken: input.idToken,
+        audience: process.env.GOOGLE_WEB_CLIENT_ID,
+      });
+      const payload = ticket.getPayload();
+      if (!payload || !payload.email)
+        throw new AppError("Invalid Google token", 401);
+
+      email = payload.email.toLowerCase();
+      firstName = payload.given_name || firstName;
+      lastName = payload.family_name || lastName;
+    } else {
+      const payload = await appleSignin.verifyIdToken(input.idToken, {
+        audience: process.env.APPLE_BUNDLE_ID,
+        ignoreExpiration: false,
+      });
+      if (!payload || !payload.email)
+        throw new AppError("Invalid Apple token", 401);
+
+      email = payload.email.toLowerCase();
+    }
+
+    //  CHECK IF USER EXISTS (LOGIN FLOW)
+    const existingUser = await db.query.users.findFirst({
+      where: eq(users.email, email),
+    });
+
+    if (existingUser) {
+      if (existingUser.status === "SUSPENDED")
+        throw new AppError("This account is suspended", 403);
+
+      // Upgrade PENDING to ACTIVE because Social Providers verify emails
+      if (existingUser.status === "PENDING") {
+        await db
+          .update(users)
+          .set({ status: "ACTIVE", updatedAt: new Date() })
+          .where(eq(users.id, existingUser.id));
+        existingUser.status = "ACTIVE";
+      }
+
+      // Check if they have pending invitations waiting for them
+      let hasPendingInvitation = false;
+      let pendingInvitation = null;
+
+      if (existingUser.role === "TENANT") {
+        const invite = await db.query.tenantInvitations.findFirst({
+          where: and(
+            eq(tenantInvitations.email, existingUser.email!),
+            eq(tenantInvitations.status, "PENDING"),
+          ),
+        });
+        if (invite) {
+          hasPendingInvitation = true;
+          pendingInvitation = invite;
+        }
+      } else if (existingUser.role === "AGENT") {
+        const invite = await db.query.agentInvitations.findFirst({
+          where: and(
+            eq(agentInvitations.email, existingUser.email!),
+            eq(agentInvitations.status, "PENDING"),
+          ),
+        });
+        if (invite) {
+          hasPendingInvitation = true;
+          pendingInvitation = invite;
+        }
+      }
+
+      const tokens = await authService.createSession(existingUser);
+      return {
+        isNewUser: false,
+        user: { ...sanitizeUser(existingUser), hasPendingInvitation },
+        pendingInvitation,
+        ...tokens,
+      };
+    }
+
+    //  NEW USER CREATION (SIGNUP FLOW)
+    if (!input.role) {
+      throw new AppError(
+        "Account not found. Please sign up and select a role.",
+        404,
+      );
+    }
+    if (
+      input.invitationToken &&
+      input.role !== "TENANT" &&
+      input.role !== "AGENT"
+    ) {
+      throw new AppError(
+        "Invitation token can only be used when registering as a tenant or agent",
+        400,
+      );
+    }
+
+    const passwordHash = await hashPassword(
+      crypto.randomBytes(32).toString("hex"),
+    );
+    let pendingInvitation = null;
+    let hasPendingInvitation = false;
+
+    const newUser = await db.transaction(async (transaction) => {
+      let tenantInvitation = null;
+      let agentInvitation = null;
+
+      // Validate Explicit Invitation Token
+      if (input.invitationToken) {
+        const tokenHash = hashToken(input.invitationToken);
+
+        if (input.role === "TENANT") {
+          tenantInvitation =
+            await transaction.query.tenantInvitations.findFirst({
+              where: eq(tenantInvitations.tokenHash, tokenHash),
+            });
+          if (!tenantInvitation)
+            throw new AppError("Invalid tenant invitation token", 400);
+          if (tenantInvitation.status !== "PENDING")
+            throw new AppError(
+              "This tenant invitation is no longer available",
+              400,
+            );
+
+          if (tenantInvitation.expiresAt <= new Date()) {
+            await transaction
+              .update(tenantInvitations)
+              .set({ status: "EXPIRED", updatedAt: new Date() })
+              .where(eq(tenantInvitations.id, tenantInvitation.id));
+            throw new AppError("This tenant invitation has expired", 400);
+          }
+        }
+
+        if (input.role === "AGENT") {
+          agentInvitation = await transaction.query.agentInvitations.findFirst({
+            where: eq(agentInvitations.tokenHash, tokenHash),
+          });
+          if (!agentInvitation)
+            throw new AppError("Invalid agent invitation token", 400);
+          if (agentInvitation.status !== "PENDING")
+            throw new AppError(
+              "This agent invitation is no longer available",
+              400,
+            );
+
+          if (agentInvitation.expiresAt <= new Date()) {
+            await transaction
+              .update(agentInvitations)
+              .set({ status: "EXPIRED", updatedAt: new Date() })
+              .where(eq(agentInvitations.id, agentInvitation.id));
+            throw new AppError("This agent invitation has expired", 400);
+          }
+        }
+      }
+
+      const [createdUser] = await transaction
+        .insert(users)
+        .values({
+          firstName,
+          lastName,
+          email,
+          phone: null,
+          passwordHash,
+          role: input.role as any,
+          status: "ACTIVE", // Social accounts skip OTP step!
+        })
+        .returning();
+
+      if (!createdUser) throw new AppError("Failed to create user", 500);
+
+      // Create proper role profiles
+      if (input.role === "LANDLORD")
+        await transaction.insert(landlords).values({ userId: createdUser.id });
+
+      let createdAgent = null;
+      if (input.role === "AGENT") {
+        const [agent] = await transaction
+          .insert(agents)
+          .values({ userId: createdUser.id })
+          .returning();
+        createdAgent = agent;
+      }
+
+      if (input.role === "TENANT")
+        await transaction.insert(tenants).values({ userId: createdUser.id });
+      if (input.role === "TECHNICIAN")
+        await transaction
+          .insert(technicians)
+          .values({ userId: createdUser.id });
+
+      // Automatically accept the invitation since they registered using it
+      if (tenantInvitation) {
+        await transaction
+          .update(tenantInvitations)
+          .set({
+            status: "ACCEPTED",
+            acceptedAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(eq(tenantInvitations.id, tenantInvitation.id));
+      }
+
+      if (agentInvitation && createdAgent) {
+        await transaction.insert(landlordAgents).values({
+          landlordId: agentInvitation.landlordId,
+          agentId: createdAgent.id,
+          status: "ACTIVE",
+          acceptedAt: new Date(),
+        });
+
+        await transaction
+          .update(agentInvitations)
+          .set({
+            status: "ACCEPTED",
+            acceptedAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(eq(agentInvitations.id, agentInvitation.id));
+      }
+
+      return createdUser;
+    });
+
+    // Check for implicitly pending invitations by email if they didn't pass a token
+    if (!input.invitationToken) {
+      if (newUser.role === "TENANT") {
+        const invite = await db.query.tenantInvitations.findFirst({
+          where: and(
+            eq(tenantInvitations.email, newUser.email!),
+            eq(tenantInvitations.status, "PENDING"),
+          ),
+        });
+        if (invite) {
+          hasPendingInvitation = true;
+          pendingInvitation = invite;
+        }
+      } else if (newUser.role === "AGENT") {
+        const invite = await db.query.agentInvitations.findFirst({
+          where: and(
+            eq(agentInvitations.email, newUser.email!),
+            eq(agentInvitations.status, "PENDING"),
+          ),
+        });
+        if (invite) {
+          hasPendingInvitation = true;
+          pendingInvitation = invite;
+        }
+      }
+    }
+
+    const tokens = await authService.createSession(newUser);
+    return {
+      isNewUser: true,
+      user: { ...sanitizeUser(newUser), hasPendingInvitation },
+      pendingInvitation,
+      ...tokens,
     };
   },
 
@@ -500,26 +697,18 @@ export const authService = {
       ? await db.query.users.findFirst({
           where: eq(users.email, identifier.toLowerCase()),
         })
-      : await db.query.users.findFirst({
-          where: eq(users.phone, identifier),
-        });
+      : await db.query.users.findFirst({ where: eq(users.phone, identifier) });
 
-    if (!user || !user.passwordHash) {
+    if (!user || !user.passwordHash)
       throw new AppError("Invalid credentials", 401);
-    }
-
-    if (user.status !== "ACTIVE") {
+    if (user.status !== "ACTIVE")
       throw new AppError("This account is not active", 403);
-    }
 
     const validPassword = await verifyPassword(
       user.passwordHash,
       input.password,
     );
-
-    if (!validPassword) {
-      throw new AppError("Invalid credentials", 401);
-    }
+    if (!validPassword) throw new AppError("Invalid credentials", 401);
 
     const tokens = await authService.createSession(user);
 
@@ -528,10 +717,10 @@ export const authService = {
       ...tokens,
     };
   },
+
   //==========================================
   // SESSION REFRESH
   // ==========================================
-
   refreshSession: async (refreshToken: string) => {
     const payload = verifyRefreshToken(refreshToken);
 
@@ -542,44 +731,27 @@ export const authService = {
       ),
     });
 
-    if (!session) {
-      throw new AppError("Session not found", 401);
-    }
-
-    if (session.status !== "ACTIVE") {
+    if (!session) throw new AppError("Session not found", 401);
+    if (session.status !== "ACTIVE")
       throw new AppError("Session is no longer active", 401);
-    }
-
-    if (session.expiresAt < new Date()) {
+    if (session.expiresAt < new Date())
       throw new AppError("Refresh token expired", 401);
-    }
 
     if (hashToken(refreshToken) !== session.refreshTokenHash) {
-      // A mismatched refresh hash indicates token reuse, so revoke the session to contain replay.
       await db
         .update(authSessions)
-        .set({
-          status: "REVOKED",
-          revokedAt: new Date(),
-        })
+        .set({ status: "REVOKED", revokedAt: new Date() })
         .where(eq(authSessions.id, session.id));
-
       throw new AppError("Invalid refresh token", 401);
     }
 
     const user = await db.query.users.findFirst({
       where: eq(users.id, session.userId),
     });
-
-    if (!user || user.status !== "ACTIVE") {
+    if (!user || user.status !== "ACTIVE")
       throw new AppError("User is not active", 401);
-    }
 
-    const newRefreshToken = signRefreshToken({
-      sub: user.id,
-      sid: session.id,
-    });
-
+    const newRefreshToken = signRefreshToken({ sub: user.id, sid: session.id });
     const newAccessToken = signAccessToken({
       sub: user.id,
       sid: session.id,
@@ -592,7 +764,6 @@ export const authService = {
         refreshTokenHash: hashToken(newRefreshToken),
         lastUsedAt: new Date(),
       })
-      // The old hash makes refresh-token rotation a one-winner operation.
       .where(
         and(
           eq(authSessions.id, session.id),
@@ -603,9 +774,8 @@ export const authService = {
       )
       .returning({ id: authSessions.id });
 
-    if (!rotatedSession) {
+    if (!rotatedSession)
       throw new AppError("Refresh token has already been used", 401);
-    }
 
     return {
       accessToken: newAccessToken,
@@ -616,41 +786,31 @@ export const authService = {
   //==========================================
   // LOGOUT AND SESSION REVOCATION
   // ==========================================
-
   logoutSession: async (sessionId: string) => {
     await db
       .update(authSessions)
-      .set({
-        status: "REVOKED",
-        revokedAt: new Date(),
-      })
+      .set({ status: "REVOKED", revokedAt: new Date() })
       .where(eq(authSessions.id, sessionId));
   },
 
   // ==========================================
   // PASSWORD MANAGEMENT
   // ==========================================
-
   forgotPassword: async (emailInput: string) => {
     const email = emailInput.trim().toLowerCase();
-
     const user = await db.query.users.findFirst({
       where: eq(users.email, email),
     });
 
-    if (!user) {
-      // I throw a generic error so attackers can't "guess" registered emails
+    if (!user)
       throw new AppError(
         "If an account exists, a reset email has been sent.",
         404,
       );
-    }
 
-    // Generate a random 6-digit code
     const code = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
 
-    // Invalidate any existing pending reset OTPs for this user
     await db
       .update(otps)
       .set({ status: "EXPIRED" })
@@ -662,7 +822,6 @@ export const authService = {
         ),
       );
 
-    // Save the new OTP
     await db.insert(otps).values({
       userId: user.id,
       code,
@@ -671,13 +830,12 @@ export const authService = {
       expiresAt,
     });
 
-    if (user.email) {
+    if (user.email)
       await emailService.sendPasswordResetEmail(
         user.email,
         code,
         user.firstName,
       );
-    }
 
     return {
       message: "If an account exists, a password reset code has been sent.",
@@ -690,16 +848,11 @@ export const authService = {
     newPassword: string,
   ) => {
     const email = emailInput.trim().toLowerCase();
-
     const user = await db.query.users.findFirst({
       where: eq(users.email, email),
     });
+    if (!user) throw new AppError("Invalid reset request", 400);
 
-    if (!user) {
-      throw new AppError("Invalid reset request", 400);
-    }
-
-    // Find the pending OTP
     const otp = await db.query.otps.findFirst({
       where: and(
         eq(otps.userId, user.id),
@@ -709,10 +862,7 @@ export const authService = {
       ),
     });
 
-    if (!otp) {
-      throw new AppError("Invalid verification code", 400);
-    }
-
+    if (!otp) throw new AppError("Invalid verification code", 400);
     if (otp.expiresAt < new Date()) {
       await db
         .update(otps)
@@ -723,19 +873,14 @@ export const authService = {
 
     const passwordHash = await hashPassword(newPassword);
 
-    // Consume OTP and update password in a transaction to prevent race conditions
     await db.transaction(async (tx) => {
       await tx
         .update(otps)
         .set({ status: "USED", updatedAt: new Date() } as any)
         .where(eq(otps.id, otp.id));
-
       await tx
         .update(users)
-        .set({
-          passwordHash, // Using your exact schema column name
-          updatedAt: new Date(),
-        })
+        .set({ passwordHash, updatedAt: new Date() })
         .where(eq(users.id, user.id));
     });
 
@@ -753,35 +898,21 @@ export const authService = {
     const user = await db.query.users.findFirst({
       where: eq(users.id, userId),
     });
+    if (!user || !user.passwordHash) throw new AppError("User not found", 404);
 
-    if (!user || !user.passwordHash) {
-      throw new AppError("User not found", 404);
-    }
-
-    // Verify current password using your custom utility
     const validPassword = await verifyPassword(
       user.passwordHash,
       currentPassword,
     );
-
-    if (!validPassword) {
+    if (!validPassword)
       throw new AppError("The current password you entered is incorrect", 400);
-    }
 
-    // Hash and save new password
     const newPasswordHash = await hashPassword(newPassword);
-
     await db
       .update(users)
-      .set({
-        passwordHash: newPasswordHash,
-        updatedAt: new Date(),
-      })
+      .set({ passwordHash: newPasswordHash, updatedAt: new Date() })
       .where(eq(users.id, userId));
 
-    return {
-      success: true,
-      message: "Password changed successfully",
-    };
+    return { success: true, message: "Password changed successfully" };
   },
 };

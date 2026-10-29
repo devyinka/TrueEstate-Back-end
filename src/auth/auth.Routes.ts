@@ -10,6 +10,8 @@ import {
   register,
   resetPassword,
   verifyAccount,
+  googleAuth,
+  appleAuth,
 } from "./auth.Controller.js";
 
 import { requireAuth } from "./auth.MiddleWare.js";
@@ -44,26 +46,20 @@ export const registerSchema = z
       .trim()
       .min(2, "First name must be at least 2 characters")
       .max(100, "First name must not exceed 100 characters"),
-
     lastName: z
       .string()
       .trim()
       .min(2, "Last name must be at least 2 characters")
       .max(100, "Last name must not exceed 100 characters"),
-
     email: z
       .string()
       .trim()
       .toLowerCase()
       .email("Please provide a valid email address")
       .optional(),
-
     phone: phoneSchema.optional(),
-
     password: passwordSchema,
-
     role: z.enum(["LANDLORD", "AGENT", "TENANT", "TECHNICIAN"]),
-
     invitationToken: z
       .string()
       .trim()
@@ -86,7 +82,6 @@ export const verifyOtpSchema = z.object({
 
 export const loginSchema = z.object({
   identifier: z.string().trim().min(3, "Email or phone is required"),
-
   password: z.string().min(1, "Password is required"),
 });
 
@@ -109,22 +104,32 @@ export const changePasswordSchema = z.object({
   newPassword: z.string().min(8, "New password must be at least 8 characters"),
 });
 
+export const socialAuthSchema = z.object({
+  idToken: z.string().trim().min(1, "ID token is required"),
+  role: z.enum(["LANDLORD", "AGENT", "TENANT", "TECHNICIAN"]).optional(),
+  invitationToken: z
+    .string()
+    .trim()
+    .min(1, "Invitation token cannot be empty")
+    .optional(),
+  firstName: z.string().trim().max(100).optional(),
+  lastName: z.string().trim().max(100).optional(),
+});
+
 const router = Router();
 
 router.post("/register", registerRateLimiter, register);
-
 router.post("/login", loginRateLimiter, login);
-
 router.post("/refresh", refreshRateLimiter, refresh);
-
 router.post("/verify", otpRateLimiter, verifyAccount);
-
 router.post("/forgot-password", forgotPasswordRateLimiter, forgotPassword);
-
 router.post("/reset-password", resetPasswordRateLimiter, resetPassword);
 
-router.post("/change-password", requireAuth, changePassword);
+// Social endpoints (use loginRateLimiter because they generate sessions)
+router.post("/google", loginRateLimiter, googleAuth);
+router.post("/apple", loginRateLimiter, appleAuth);
 
+router.post("/change-password", requireAuth, changePassword);
 router.post("/logout", requireAuth, logout);
 
 export default router;

@@ -130,6 +130,7 @@ router.post("/google", loginRateLimiter, googleAuth);
 router.post("/apple", loginRateLimiter, appleAuth);
 
 router.post("/change-password", requireAuth, changePassword);
+router.post("refreshsession", requireAuth, refresh);
 router.post("/logout", requireAuth, logout);
 
 export default router;

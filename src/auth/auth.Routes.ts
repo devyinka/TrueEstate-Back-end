@@ -124,12 +124,12 @@ router.post("/refresh", refreshRateLimiter, refresh);
 router.post("/verify", otpRateLimiter, verifyAccount);
 router.post("/forgot-password", forgotPasswordRateLimiter, forgotPassword);
 router.post("/reset-password", resetPasswordRateLimiter, resetPassword);
-
-// Social endpoints (use loginRateLimiter because they generate sessions)
-router.post("/google", loginRateLimiter, googleAuth);
-router.post("/apple", loginRateLimiter, appleAuth);
+router.post("/GoogleAuthentication", googleAuth);
+router.post("/AppleAuthentication", loginRateLimiter, appleAuth);
+// Social endpoints (use loginRateLimiter because they generate sessions
 
 router.post("/change-password", requireAuth, changePassword);
+router.post("refreshsession", requireAuth, refresh);
 router.post("/logout", requireAuth, logout);
 
 export default router;

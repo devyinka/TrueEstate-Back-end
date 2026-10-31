@@ -348,58 +348,8 @@ export const authService = {
           throw new AppError("Failed to create technician profile", 500);
       }
 
-      if (tenantInvitation) {
-        const [acceptedInvitation] = await transaction
-          .update(tenantInvitations)
-          .set({
-            status: "ACCEPTED",
-            acceptedAt: new Date(),
-            updatedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(tenantInvitations.id, tenantInvitation.id),
-              eq(tenantInvitations.status, "PENDING"),
-            ),
-          )
-          .returning();
-        if (!acceptedInvitation)
-          throw new AppError("Tenant invitation is no longer available", 409);
-      }
-
-      if (agentInvitation && createdAgent) {
-        const [relationship] = await transaction
-          .insert(landlordAgents)
-          .values({
-            landlordId: agentInvitation.landlordId,
-            agentId: createdAgent.id,
-            status: "ACTIVE",
-            acceptedAt: new Date(),
-          })
-          .returning();
-        if (!relationship)
-          throw new AppError(
-            "Failed to create landlord-agent relationship",
-            500,
-          );
-
-        const [acceptedInvitation] = await transaction
-          .update(agentInvitations)
-          .set({
-            status: "ACCEPTED",
-            acceptedAt: new Date(),
-            updatedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(agentInvitations.id, agentInvitation.id),
-              eq(agentInvitations.status, "PENDING"),
-            ),
-          )
-          .returning();
-        if (!acceptedInvitation)
-          throw new AppError("Agent invitation is no longer available", 409);
-      }
+      // NOTE: For standard email registration, the invitation remains pending
+      // until the user verifies their OTP. Once active, they can accept it.
 
       return createdUser;
     });
@@ -528,7 +478,8 @@ export const authService = {
     const passwordHash = await hashPassword(
       crypto.randomBytes(32).toString("hex"),
     );
-    let pendingInvitation = null;
+
+    let pendingInvitation: any = null;
     let hasPendingInvitation = false;
 
     const newUser = await db.transaction(async (transaction) => {
@@ -602,51 +553,24 @@ export const authService = {
       if (input.role === "LANDLORD")
         await transaction.insert(landlords).values({ userId: createdUser.id });
 
-      let createdAgent = null;
       if (input.role === "AGENT") {
-        const [agent] = await transaction
-          .insert(agents)
-          .values({ userId: createdUser.id })
-          .returning();
-        createdAgent = agent;
+        await transaction.insert(agents).values({ userId: createdUser.id });
       }
 
       if (input.role === "TENANT")
         await transaction.insert(tenants).values({ userId: createdUser.id });
+
       if (input.role === "TECHNICIAN")
         await transaction
           .insert(technicians)
           .values({ userId: createdUser.id });
 
-      // Automatically accept the invitation since they registered using it
-      if (tenantInvitation) {
-        await transaction
-          .update(tenantInvitations)
-          .set({
-            status: "ACCEPTED",
-            acceptedAt: new Date(),
-            updatedAt: new Date(),
-          })
-          .where(eq(tenantInvitations.id, tenantInvitation.id));
-      }
+      // Export the invitation to the outer scope so the mobile app receives it
+      if (tenantInvitation) pendingInvitation = tenantInvitation;
+      if (agentInvitation) pendingInvitation = agentInvitation;
 
-      if (agentInvitation && createdAgent) {
-        await transaction.insert(landlordAgents).values({
-          landlordId: agentInvitation.landlordId,
-          agentId: createdAgent.id,
-          status: "ACTIVE",
-          acceptedAt: new Date(),
-        });
-
-        await transaction
-          .update(agentInvitations)
-          .set({
-            status: "ACCEPTED",
-            acceptedAt: new Date(),
-            updatedAt: new Date(),
-          })
-          .where(eq(agentInvitations.id, agentInvitation.id));
-      }
+      // Note: We leave the invitation status as "PENDING".
+      // The user must explicitly accept it via the frontend flow to trigger tenancy creation.
 
       return createdUser;
     });
@@ -660,10 +584,7 @@ export const authService = {
             eq(tenantInvitations.status, "PENDING"),
           ),
         });
-        if (invite) {
-          hasPendingInvitation = true;
-          pendingInvitation = invite;
-        }
+        if (invite) pendingInvitation = invite;
       } else if (newUser.role === "AGENT") {
         const invite = await db.query.agentInvitations.findFirst({
           where: and(
@@ -671,12 +592,11 @@ export const authService = {
             eq(agentInvitations.status, "PENDING"),
           ),
         });
-        if (invite) {
-          hasPendingInvitation = true;
-          pendingInvitation = invite;
-        }
+        if (invite) pendingInvitation = invite;
       }
     }
+
+    if (pendingInvitation) hasPendingInvitation = true;
 
     const tokens = await authService.createSession(newUser);
     return {

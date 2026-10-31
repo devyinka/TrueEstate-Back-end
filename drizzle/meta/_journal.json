@@ -57,6 +57,13 @@
       "when": 1793185179735,
       "tag": "0007_lush_tattoo",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793442626994,
+      "tag": "0008_sudden_alex_wilder",
+      "breakpoints": true
     }
   ]
 }

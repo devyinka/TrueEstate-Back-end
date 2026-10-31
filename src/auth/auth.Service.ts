@@ -374,14 +374,6 @@ export const authService = {
     firstName?: string;
     lastName?: string;
   }) => {
-    //  NEW USER CREATION (SIGNUP FLOW)
-    if (!input.role) {
-      throw new AppError(
-        "Account not found. Please sign up and select a role.",
-        404,
-      );
-    }
-
     let email: string;
     let firstName = input.firstName?.trim() || "User";
     let lastName = input.lastName?.trim() || "";
@@ -464,6 +456,13 @@ export const authService = {
         pendingInvitation,
         ...tokens,
       };
+    }
+
+    if (!input.role) {
+      throw new AppError(
+        "Account not found. Please sign up and select a role.",
+        404,
+      );
     }
 
     if (

@@ -12,6 +12,7 @@ import {
   verifyAccount,
   googleAuth,
   appleAuth,
+  resendVerificationCode,
 } from "./auth.Controller.js";
 
 import { requireAuth } from "./auth.MiddleWare.js";
@@ -122,6 +123,7 @@ router.post("/register", registerRateLimiter, register);
 router.post("/login", loginRateLimiter, login);
 router.post("/refresh", refreshRateLimiter, refresh);
 router.post("/verify", otpRateLimiter, verifyAccount);
+router.post("/resend-verification", otpRateLimiter, resendVerificationCode);
 router.post("/forgot-password", forgotPasswordRateLimiter, forgotPassword);
 router.post("/reset-password", resetPasswordRateLimiter, resetPassword);
 router.post("/GoogleAuthentication", loginRateLimiter, googleAuth);

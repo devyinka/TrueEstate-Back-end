@@ -115,6 +115,15 @@ export const authService = {
     return newOtp;
   },
 
+  resendVerificationOtp: async (userId: string) => {
+    const user = await db.query.users.findFirst({
+      where: eq(users.id, userId),
+    });
+    if (!user) throw new AppError("User not found", 404);
+    const otp = await authService.generateVerificationOtp(userId);
+    return otp;
+  },
+
   //==========================================
   // OTP VERIFICATION AND ACCOUNT ACTIVATION
   // ==========================================

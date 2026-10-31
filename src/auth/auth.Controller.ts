@@ -35,6 +35,23 @@ export async function verifyAccount(req: Request, res: Response) {
   });
 }
 
+export async function resendVerificationCode(req: Request, res: Response) {
+  const { userId } = req.body;
+  if (!userId) {
+    return res
+      .status(400)
+      .json({ success: false, message: "User ID is required" });
+  }
+
+  const result = await authService.resendVerificationOtp(userId);
+
+  return res.status(200).json({
+    success: true,
+    message: "Verification code resent successfully",
+    data: result,
+  });
+}
+
 export async function login(req: Request, res: Response) {
   const input = loginSchema.parse(req.body);
   const result = await authService.loginUser(input);

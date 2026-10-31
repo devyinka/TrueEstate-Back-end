@@ -348,7 +348,7 @@ export const authService = {
           throw new AppError("Failed to create technician profile", 500);
       }
 
-      // NOTE: For standard email registration, the invitation remains pending
+      //  For standard email registration, the invitation remains pending
       // until the user verifies their OTP. Once active, they can accept it.
 
       return createdUser;
@@ -374,6 +374,14 @@ export const authService = {
     firstName?: string;
     lastName?: string;
   }) => {
+    //  NEW USER CREATION (SIGNUP FLOW)
+    if (!input.role) {
+      throw new AppError(
+        "Account not found. Please sign up and select a role.",
+        404,
+      );
+    }
+
     let email: string;
     let firstName = input.firstName?.trim() || "User";
     let lastName = input.lastName?.trim() || "";
@@ -384,6 +392,7 @@ export const authService = {
         idToken: input.idToken,
         audience: process.env.GOOGLE_WEB_CLIENT_ID,
       });
+
       const payload = ticket.getPayload();
       if (!payload || !payload.email)
         throw new AppError("Invalid Google token", 401);
@@ -457,13 +466,6 @@ export const authService = {
       };
     }
 
-    //  NEW USER CREATION (SIGNUP FLOW)
-    if (!input.role) {
-      throw new AppError(
-        "Account not found. Please sign up and select a role.",
-        404,
-      );
-    }
     if (
       input.invitationToken &&
       input.role !== "TENANT" &&
